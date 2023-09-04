@@ -1,0 +1,80 @@
+== Introduction
+
+https://libvirt.org/[libvirt] supports https://libvirt.org/hooks.html[hooks] script to perform additional tasks when provisioning guest domain.
+
+Traditionally, using vlan interface in libvirt domain create a bridge for each vlan network.  This complicates host's network stack if VLANs are growing.
+
+Linux bridge supports https://developers.redhat.com/blog/2017/09/14/vlan-filter-support-on-bridge[vlan-filtering] that define one bridge only to manage multiple VLANs.
+
+However, the libvirt guest domain configuration doesn't support bridge VLAN configuration.
+
+This project injects hooks script to libvirt and customize VLANs of network interface tap to bridge in libvirt guest domain.
+
+== Installation
+
+The hook script use `bridge` utility.  Enable **setuid** for bridge utility if perform user session (`qemu:///session`) provision:
+
+[source,bash]
+----
+sudo chmod u+s `which bridge`
+----
+
+To install hook script:
+[source,bash]
+----
+# Make qemu.d/ directory to host hook script
+sudo mkdir -p /etc/libvirt/hooks/qemu.d/
+
+# Download script and store in qemu.d/ directory
+curl -L https://github.com/eStreamSoftware/libvirt-hooks/raw/master/bridge-vlan.sh | sudo tee /etc/libvirt/hooks/qemu.d/bridge-vlan.sh
+
+# Enable execution
+sudo chmod +x /etc/libvirt/hooks/qemu.d/bridge-vlan.sh
+----
+
+== Example: Create bridge using NetworkManger cli
+
+[source,bash]
+----
+# Define a bridge
+BR=bridge0
+
+# Create a network bridge with vlan-filtering support
+sudo nmcli con add type bridge \
+ bridge.vlan-filtering yes \
+ bridge.stp no \
+ ipv4.method disabled \
+ ipv6.method disabled \
+ ifname $BR con-name $BR
+----
+
+NOTE: bridge supports `bridge.vlan-default-pvid` and `bridge.vlans` option too.
+
+Attach a network interface to the bridge:
+
+[source,bash]
+----
+# Optional: Add a network interface as member to the bridge
+DEV=enp2s0
+sudo nmcli con add type bridge-slave connection.autoconnect yes bridge-port.vlans "2-4094" ifname $DEV master $BR
+
+# Optional: Activate the connection (get new connection profile name from last execution)
+sudo nmcli con up #bridge-slave-connection
+----
+
+To add bridge device to libvirt guest domain:
+
+[source,bash]
+----
+virsh attach-interface $VM bridge $BR --model virtio --config
+----
+
+== Others
+
+To monitor bridge and vlan configuration of network devices:
+
+ watch "bridge -d vlan show; echo; bridge link show; echo; nmcli dev status; echo; nmcli con show"
+
+To monitor hook script execution:
+
+ sudo journalctl -f | grep qemu-hook
